@@ -211,8 +211,8 @@ private extension CoreLocationProvider {
     }
 }
 
-extension CoreLocationProvider: CLLocationManagerDelegate {
-
+extension CoreLocationProvider: @MainActor CLLocationManagerDelegate {
+    
     public func locationManagerDidChangeAuthorization(
         _ manager: CLLocationManager
     ) {
