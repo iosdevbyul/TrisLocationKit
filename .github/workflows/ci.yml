@@ -27,7 +27,7 @@ jobs:
         run: |
           swift package resolve
 
-      - name: Prepare iOS Simulator
+      - name: Select iOS Simulator
         run: |
           set -euo pipefail
 
@@ -91,86 +91,83 @@ jobs:
               and device.get("name", "").startswith("iPhone")
           ]
 
-          device_id = None
-
           preferred_names = [
               "iPhone 17",
               "iPhone 17 Pro",
               "iPhone 17 Pro Max",
-              "iPhone 17e",
               "iPhone Air",
+              "iPhone 16",
+              "iPhone 16 Pro",
           ]
 
+          selected_device = None
+
           for preferred_name in preferred_names:
-              matching_device = next(
+              selected_device = next(
                   (
                       device
                       for device in available_devices
-                      if device["name"] == preferred_name
+                      if device.get("name") == preferred_name
                   ),
                   None
               )
 
-              if matching_device:
-                  device_id = matching_device["udid"]
-
-                  print(
-                      f"Using existing simulator: "
-                      f"{matching_device['name']} "
-                      f"({device_id})"
-                  )
-
+              if selected_device is not None:
                   break
 
-          if device_id is None and available_devices:
-              device = available_devices[0]
-              device_id = device["udid"]
+          if selected_device is None and available_devices:
+              selected_device = available_devices[0]
+
+          if selected_device is not None:
+              simulator_id = selected_device["udid"]
 
               print(
                   f"Using existing simulator: "
-                  f"{device['name']} "
-                  f"({device_id})"
+                  f"{selected_device['name']} "
+                  f"({simulator_id})"
               )
 
-          if device_id is None:
-              device_types = (
-                  device_types_data.get("devicetypes", [])
+          else:
+              device_types = device_types_data.get(
+                  "devicetypes",
+                  []
               )
 
-              device_type = None
+              selected_device_type = None
 
               for preferred_name in preferred_names:
-                  device_type = next(
+                  selected_device_type = next(
                       (
-                          item
-                          for item in device_types
-                          if item.get("name") == preferred_name
+                          device_type
+                          for device_type in device_types
+                          if device_type.get("name")
+                              == preferred_name
                       ),
                       None
                   )
 
-                  if device_type:
+                  if selected_device_type is not None:
                       break
 
-              if device_type is None:
-                  device_type = next(
+              if selected_device_type is None:
+                  selected_device_type = next(
                       (
-                          item
-                          for item in device_types
-                          if item.get("name", "")
+                          device_type
+                          for device_type in device_types
+                          if device_type.get("name", "")
                               .startswith("iPhone")
                       ),
                       None
                   )
 
-              if device_type is None:
+              if selected_device_type is None:
                   raise SystemExit(
                       "No iPhone Simulator device type found."
                   )
 
               print(
-                  f"Creating simulator using "
-                  f"{device_type['name']}"
+                  f"Creating simulator using: "
+                  f"{selected_device_type['name']}"
               )
 
               result = subprocess.run(
@@ -179,7 +176,7 @@ jobs:
                       "simctl",
                       "create",
                       "CI iPhone",
-                      device_type["identifier"],
+                      selected_device_type["identifier"],
                       runtime_id,
                   ],
                   check=True,
@@ -187,19 +184,23 @@ jobs:
                   text=True,
               )
 
-              device_id = result.stdout.strip()
+              simulator_id = result.stdout.strip()
 
               print(
-                  f"Created simulator: {device_id}"
+                  f"Created simulator: {simulator_id}"
               )
 
           github_env = os.environ["GITHUB_ENV"]
 
           with open(github_env, "a") as f:
               f.write(
-                  f"SIMULATOR_ID={device_id}\n"
+                  f"SIMULATOR_ID={simulator_id}\n"
               )
           PY
+
+      - name: Boot iOS Simulator
+        run: |
+          set -euo pipefail
 
           echo "Selected simulator: $SIMULATOR_ID"
 
