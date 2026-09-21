@@ -11,7 +11,7 @@ import Foundation
 @MainActor
 public final class CoreLocationProvider: NSObject, LocationProviding {
 
-    private let locationManager: CLLocationManager
+    private let locationManager: any CoreLocationManagerClient
 
     private var authorizationContinuations: [
         CheckedContinuation<LocationAuthorizationStatus, Never>
@@ -28,15 +28,27 @@ public final class CoreLocationProvider: NSObject, LocationProviding {
     private var isUpdatingLocation = false
 
     public override init() {
-        locationManager = CLLocationManager()
+        locationManager = SystemCoreLocationManagerClient()
 
         super.init()
 
-        locationManager.delegate = self
+        bindLocationManager()
+    }
+
+    init(
+        locationManager: any CoreLocationManagerClient
+    ) {
+        self.locationManager = locationManager
+
+        super.init()
+
+        bindLocationManager()
     }
 
     public var authorizationStatus: LocationAuthorizationStatus {
-        locationManager.authorizationStatus.locationAuthorizationStatus
+        locationManager
+            .authorizationStatus
+            .locationAuthorizationStatus
     }
 
     public func requestWhenInUseAuthorization() async -> LocationAuthorizationStatus {
@@ -109,9 +121,7 @@ public final class CoreLocationProvider: NSObject, LocationProviding {
     }
 
     public func stopLocationUpdates() {
-        locationManager.stopUpdatingLocation()
-
-        isUpdatingLocation = false
+        stopUnderlyingLocationManagerIfNeeded()
 
         let continuations = locationStreamContinuations.values
         locationStreamContinuations.removeAll()
@@ -127,6 +137,92 @@ public final class CoreLocationProvider: NSObject, LocationProviding {
 }
 
 private extension CoreLocationProvider {
+
+    func bindLocationManager() {
+        locationManager.onAuthorizationChanged = { [weak self] status in
+            self?.handleAuthorizationChange(status)
+        }
+
+        locationManager.onLocationsUpdated = { [weak self] locations in
+            self?.handleLocationsUpdate(locations)
+        }
+
+        locationManager.onFailure = { [weak self] error in
+            self?.handleFailure(error)
+        }
+    }
+
+    func handleAuthorizationChange(
+        _ authorizationStatus: CLAuthorizationStatus
+    ) {
+        let status = authorizationStatus.locationAuthorizationStatus
+
+        if status != .notDetermined {
+            finishAuthorizationRequests(with: status)
+        }
+
+        switch status {
+        case .denied:
+            finishCurrentLocationRequests(
+                throwing: .authorizationDenied
+            )
+
+            finishLocationStreams(
+                throwing: .authorizationDenied
+            )
+
+        case .restricted:
+            finishCurrentLocationRequests(
+                throwing: .authorizationRestricted
+            )
+
+            finishLocationStreams(
+                throwing: .authorizationRestricted
+            )
+
+        case .notDetermined,
+             .authorizedWhenInUse,
+             .authorizedAlways,
+             .unknown:
+            break
+        }
+    }
+
+    func handleLocationsUpdate(
+        _ locations: [CLLocation]
+    ) {
+        guard let latestLocation = locations.last else {
+            return
+        }
+
+        finishCurrentLocationRequests(
+            with: latestLocation.locationPoint
+        )
+
+        for location in locations {
+            let point = location.locationPoint
+
+            for continuation in locationStreamContinuations.values {
+                continuation.yield(point)
+            }
+        }
+    }
+
+    func handleFailure(
+        _ error: any Error
+    ) {
+        let locationError = mapLocationError(error)
+
+        finishCurrentLocationRequests(
+            throwing: locationError
+        )
+
+        if locationError != .locationUnavailable {
+            finishLocationStreams(
+                throwing: locationError
+            )
+        }
+    }
 
     func validateAuthorization() throws {
         switch authorizationStatus {
@@ -149,14 +245,15 @@ private extension CoreLocationProvider {
     }
 
     func removeLocationStream(id: UUID) {
-        locationStreamContinuations.removeValue(forKey: id)
+        guard locationStreamContinuations.removeValue(forKey: id) != nil else {
+            return
+        }
 
         guard locationStreamContinuations.isEmpty else {
             return
         }
 
-        locationManager.stopUpdatingLocation()
-        isUpdatingLocation = false
+        stopUnderlyingLocationManagerIfNeeded()
 
         if !currentLocationContinuations.isEmpty {
             locationManager.requestLocation()
@@ -199,8 +296,7 @@ private extension CoreLocationProvider {
     func finishLocationStreams(
         throwing error: LocationError
     ) {
-        locationManager.stopUpdatingLocation()
-        isUpdatingLocation = false
+        stopUnderlyingLocationManagerIfNeeded()
 
         let continuations = locationStreamContinuations.values
         locationStreamContinuations.removeAll()
@@ -209,86 +305,6 @@ private extension CoreLocationProvider {
             continuation.finish(throwing: error)
         }
     }
-}
-
-extension CoreLocationProvider: @MainActor CLLocationManagerDelegate {
-    
-    public func locationManagerDidChangeAuthorization(
-        _ manager: CLLocationManager
-    ) {
-        let status = manager.authorizationStatus.locationAuthorizationStatus
-
-        if status != .notDetermined {
-            finishAuthorizationRequests(with: status)
-        }
-
-        switch status {
-        case .denied:
-            finishCurrentLocationRequests(
-                throwing: .authorizationDenied
-            )
-
-            finishLocationStreams(
-                throwing: .authorizationDenied
-            )
-
-        case .restricted:
-            finishCurrentLocationRequests(
-                throwing: .authorizationRestricted
-            )
-
-            finishLocationStreams(
-                throwing: .authorizationRestricted
-            )
-
-        case .notDetermined,
-             .authorizedWhenInUse,
-             .authorizedAlways,
-             .unknown:
-            break
-        }
-    }
-
-    public func locationManager(
-        _ manager: CLLocationManager,
-        didUpdateLocations locations: [CLLocation]
-    ) {
-        guard let latestLocation = locations.last else {
-            return
-        }
-
-        finishCurrentLocationRequests(
-            with: latestLocation.locationPoint
-        )
-
-        for location in locations {
-            let point = location.locationPoint
-
-            for continuation in locationStreamContinuations.values {
-                continuation.yield(point)
-            }
-        }
-    }
-
-    public func locationManager(
-        _ manager: CLLocationManager,
-        didFailWithError error: any Error
-    ) {
-        let locationError = mapLocationError(error)
-
-        finishCurrentLocationRequests(
-            throwing: locationError
-        )
-
-        if locationError != .locationUnavailable {
-            finishLocationStreams(
-                throwing: locationError
-            )
-        }
-    }
-}
-
-private extension CoreLocationProvider {
 
     func mapLocationError(
         _ error: any Error
@@ -307,5 +323,14 @@ private extension CoreLocationProvider {
         default:
             return .requestFailed
         }
+    }
+    
+    func stopUnderlyingLocationManagerIfNeeded() {
+        guard isUpdatingLocation else {
+            return
+        }
+
+        isUpdatingLocation = false
+        locationManager.stopUpdatingLocation()
     }
 }
