@@ -6,6 +6,7 @@
 //
 
 public enum LocationError: Error, Sendable, Equatable {
+    case authorizationNotDetermined
     case authorizationDenied
     case authorizationRestricted
     case locationUnavailable

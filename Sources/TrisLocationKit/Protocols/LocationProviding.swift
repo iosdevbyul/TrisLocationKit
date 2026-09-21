@@ -12,7 +12,7 @@ public protocol LocationProviding: AnyObject {
 
     func requestWhenInUseAuthorization() async -> LocationAuthorizationStatus
 
-    func requestAlwaysAuthorization() async -> LocationAuthorizationStatus
+    func requestAlwaysAuthorization()
 
     func requestCurrentLocation() async throws -> LocationPoint
 
