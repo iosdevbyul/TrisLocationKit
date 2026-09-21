@@ -218,4 +218,181 @@ struct CoreLocationProviderTests {
             )
         }
     }
+    
+    @Test
+    func locationUpdatesStartsLocationUpdates() {
+        let manager = MockCoreLocationManagerClient(
+            authorizationStatus: .authorizedWhenInUse
+        )
+
+        let provider = CoreLocationProvider(
+            locationManager: manager
+        )
+
+        _ = provider.locationUpdates()
+
+        #expect(
+            manager.startUpdatingLocationCallCount == 1
+        )
+    }
+
+    @Test
+    func locationUpdatesDoesNotStartMoreThanOnceForMultipleStreams() {
+        let manager = MockCoreLocationManagerClient(
+            authorizationStatus: .authorizedWhenInUse
+        )
+
+        let provider = CoreLocationProvider(
+            locationManager: manager
+        )
+
+        _ = provider.locationUpdates()
+        _ = provider.locationUpdates()
+
+        #expect(
+            manager.startUpdatingLocationCallCount == 1
+        )
+    }
+
+    @Test
+    func locationUpdatesYieldsReceivedLocation() async throws {
+        let manager = MockCoreLocationManagerClient(
+            authorizationStatus: .authorizedWhenInUse
+        )
+
+        let provider = CoreLocationProvider(
+            locationManager: manager
+        )
+
+        let timestamp = Date(
+            timeIntervalSince1970: 2_000
+        )
+
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(
+                latitude: 37.5,
+                longitude: 127.5
+            ),
+            altitude: 50,
+            horizontalAccuracy: 3,
+            verticalAccuracy: 4,
+            course: 90,
+            speed: 2.5,
+            timestamp: timestamp
+        )
+
+        let stream = provider.locationUpdates()
+        var iterator = stream.makeAsyncIterator()
+
+        manager.sendLocations([location])
+
+        let point = try await iterator.next()
+
+        #expect(point?.latitude == 37.5)
+        #expect(point?.longitude == 127.5)
+        #expect(point?.altitude == 50)
+        #expect(point?.horizontalAccuracy == 3)
+        #expect(point?.verticalAccuracy == 4)
+        #expect(point?.course == 90)
+        #expect(point?.speed == 2.5)
+        #expect(point?.timestamp == timestamp)
+
+        provider.stopLocationUpdates()
+    }
+
+    @Test
+    func stopLocationUpdatesStopsUnderlyingLocationManager() async throws {
+        let manager = MockCoreLocationManagerClient(
+            authorizationStatus: .authorizedWhenInUse
+        )
+
+        let provider = CoreLocationProvider(
+            locationManager: manager
+        )
+
+        let stream = provider.locationUpdates()
+        var iterator = stream.makeAsyncIterator()
+
+        provider.stopLocationUpdates()
+
+        #expect(
+            manager.stopUpdatingLocationCallCount == 1
+        )
+
+        let nextValue = try await iterator.next()
+
+        #expect(nextValue == nil)
+    }
+
+    @Test
+    func locationUpdatesThrowsWhenAuthorizationDenied() async {
+        let manager = MockCoreLocationManagerClient(
+            authorizationStatus: .denied
+        )
+
+        let provider = CoreLocationProvider(
+            locationManager: manager
+        )
+
+        let stream = provider.locationUpdates()
+        var iterator = stream.makeAsyncIterator()
+
+        do {
+            _ = try await iterator.next()
+
+            Issue.record(
+                "Expected authorizationDenied error"
+            )
+        } catch let error as LocationError {
+            #expect(
+                error == .authorizationDenied
+            )
+        } catch {
+            Issue.record(
+                "Unexpected error: \(error)"
+            )
+        }
+
+        #expect(
+            manager.startUpdatingLocationCallCount == 0
+        )
+    }
+
+    @Test
+    func locationUpdatesFinishesWithDeniedErrorFromManager() async {
+        let manager = MockCoreLocationManagerClient(
+            authorizationStatus: .authorizedWhenInUse
+        )
+
+        let provider = CoreLocationProvider(
+            locationManager: manager
+        )
+
+        let stream = provider.locationUpdates()
+        var iterator = stream.makeAsyncIterator()
+
+        manager.sendFailure(
+            CLError(.denied)
+        )
+
+        do {
+            _ = try await iterator.next()
+
+            Issue.record(
+                "Expected authorizationDenied error"
+            )
+        } catch let error as LocationError {
+            #expect(
+                error == .authorizationDenied
+            )
+        } catch {
+            Issue.record(
+                "Unexpected error: \(error)"
+            )
+        }
+
+        #expect(
+            manager.stopUpdatingLocationCallCount == 1
+        )
+    }
 }

@@ -121,9 +121,7 @@ public final class CoreLocationProvider: NSObject, LocationProviding {
     }
 
     public func stopLocationUpdates() {
-        locationManager.stopUpdatingLocation()
-
-        isUpdatingLocation = false
+        stopUnderlyingLocationManagerIfNeeded()
 
         let continuations = locationStreamContinuations.values
         locationStreamContinuations.removeAll()
@@ -247,14 +245,15 @@ private extension CoreLocationProvider {
     }
 
     func removeLocationStream(id: UUID) {
-        locationStreamContinuations.removeValue(forKey: id)
+        guard locationStreamContinuations.removeValue(forKey: id) != nil else {
+            return
+        }
 
         guard locationStreamContinuations.isEmpty else {
             return
         }
 
-        locationManager.stopUpdatingLocation()
-        isUpdatingLocation = false
+        stopUnderlyingLocationManagerIfNeeded()
 
         if !currentLocationContinuations.isEmpty {
             locationManager.requestLocation()
@@ -297,8 +296,7 @@ private extension CoreLocationProvider {
     func finishLocationStreams(
         throwing error: LocationError
     ) {
-        locationManager.stopUpdatingLocation()
-        isUpdatingLocation = false
+        stopUnderlyingLocationManagerIfNeeded()
 
         let continuations = locationStreamContinuations.values
         locationStreamContinuations.removeAll()
@@ -325,5 +323,14 @@ private extension CoreLocationProvider {
         default:
             return .requestFailed
         }
+    }
+    
+    func stopUnderlyingLocationManagerIfNeeded() {
+        guard isUpdatingLocation else {
+            return
+        }
+
+        isUpdatingLocation = false
+        locationManager.stopUpdatingLocation()
     }
 }
