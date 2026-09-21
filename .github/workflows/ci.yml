@@ -28,10 +28,10 @@ jobs:
           swift package resolve
 
       - name: Build and Test
-          run: |
-            xcodebuild \
-              -scheme TrisLocationKit \
-              -destination 'platform=iOS Simulator,name=iPhone 17' \
-              -configuration Debug \
-              CODE_SIGNING_ALLOWED=NO \
-              test
+        run: |
+          xcodebuild \
+            -scheme TrisLocationKit \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            test
